@@ -1,4 +1,4 @@
-"""Command line entry point: run every strategy, combine, and report."""
+"""Command line entry point: run the multi-strategy demo or any technique study."""
 
 from __future__ import annotations
 
@@ -6,60 +6,35 @@ import argparse
 
 import pandas as pd
 
-from . import studies
-from .data import load_prices_csv, synthetic_ohlc, synthetic_pair, synthetic_prices
-from .datasources import LARGE_CAP, DataSourceError, clean_panel, fetch_factors, fetch_prices
+from .datasources import DataSourceError
+from .inputs import Config, Inputs
 from .metrics import performance_summary
 from .portfolio import combine_inverse_vol
-from .report import format_table, plot_report, summary_table
-from .strategies import run_all
+from .report import format_table, plot_report, render, summary_table
+from .studies import STUDIES
 
 
-def load_universe(args: argparse.Namespace) -> pd.DataFrame:
-    """Resolve the price panel from --csv, --source yahoo, or synthetic data."""
-    if args.csv:
-        return load_prices_csv(args.csv)
-    if args.source == "yahoo":
-        tickers = args.tickers.split(",") if args.tickers else LARGE_CAP
-        raw = fetch_prices(tickers, args.start, args.end, refresh=args.refresh, offline=args.offline)
-        return clean_panel(raw)
-    return synthetic_prices(seed=args.seed)
+def demo(inp: Inputs, out: str) -> None:
+    prices, rets = inp.prices, inp.strategy_returns
+    print(f"Universe: {prices.shape[1]} assets, {len(prices)} days "
+          f"({prices.index[0].date()} -> {prices.index[-1].date()}), cost {inp.cfg.cost_bps} bps\n")
+    port = combine_inverse_vol(rets)
+    stats = {n: r.summary() for n, r in inp.backtests.items()}
+    stats["PORTFOLIO"] = performance_summary(port)
+    print(format_table(summary_table(stats)))
+    print("\nStrategy return correlations:")
+    print(rets.corr().round(2).to_string())
+    print(f"\nChart saved to {plot_report(rets, port, out)}")
 
 
-def run_studies(args: argparse.Namespace) -> None:
-    prices = load_universe(args)
-    want = (lambda k: args.study in (k, "all"))
-    if want("trend"):
-        studies.trend_study(prices)
-    if want("pairs"):
-        studies.pairs_study(synthetic_pair(), cost_bps=args.cost_bps)
-    if want("countertrend"):
-        studies.countertrend_study(synthetic_ohlc())
-    if want("risk"):
-        studies.risk_study(prices.pct_change().dropna())
-    if want("vol"):
-        studies.vol_study(prices.mean(axis=1))
-    if want("validation"):
-        studies.validation_study(prices, cost_bps=args.cost_bps)
-    if want("attribution"):
-        rets = pd.DataFrame({n: r.returns for n, r in run_all(prices, args.cost_bps).items()})
-        if args.source == "yahoo" and not args.csv:
-            kw = {"refresh": args.refresh, "offline": args.offline}
-            fac = fetch_factors("ff5", args.start, args.end, **kw).join(
-                fetch_factors("mom", args.start, args.end, **kw), how="inner")
-            studies.attribution_study(rets, fac, "RF")
-        else:
-            print("\n(synthetic/CSV data: using the universe's equal-weight return as the only "
-                  "'market' factor; use --source yahoo for Fama-French factors)")
-            studies.attribution_study(rets, pd.DataFrame({"MKT": prices.pct_change().mean(axis=1)}), None)
-
-
-def main(argv: list[str] | None = None) -> None:
-    ap = argparse.ArgumentParser(description="Run the quantfolio multi-strategy demo.")
-    ap.add_argument("--csv", help="wide CSV of close prices (Date index); default: synthetic data")
+def build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(description="Run the quantfolio multi-strategy demo or a study.")
+    ap.add_argument("--csv", help="wide CSV of close prices (Date index); overrides --source")
     ap.add_argument("--source", choices=["synthetic", "yahoo"], default="synthetic",
-                    help="price source (yahoo = public daily bars, cached on disk)")
-    ap.add_argument("--tickers", help="comma-separated tickers for --source yahoo (default: large-cap universe)")
+                    help="data source (yahoo = public daily bars, cached on disk)")
+    ap.add_argument("--tickers", help="comma-separated tickers (default: large-cap universe)")
+    ap.add_argument("--pair", default="KO,PEP", help="two tickers for the pairs study")
+    ap.add_argument("--ohlc-ticker", default="SPY", help="instrument for the countertrend study")
     ap.add_argument("--start", default="2010-01-01")
     ap.add_argument("--end")
     ap.add_argument("--refresh", action="store_true", help="ignore cache freshness and re-download")
@@ -67,35 +42,28 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--cost-bps", type=float, default=5.0)
     ap.add_argument("--out", default="output/report.png")
-    ap.add_argument("--study", choices=["trend", "pairs", "countertrend", "risk", "vol", "validation", "attribution", "all"],
+    ap.add_argument("--study", choices=[*STUDIES, "all"],
                     help="run a technique study instead of the multi-strategy demo")
-    args = ap.parse_args(argv)
+    return ap
 
+
+def main(argv: list[str] | None = None) -> None:
+    ap = build_parser()
+    a = ap.parse_args(argv)
+    pair = tuple(a.pair.split(","))
+    if len(pair) != 2:
+        ap.error("--pair needs exactly two tickers, e.g. KO,PEP")
+    cfg = Config(source=a.source, csv=a.csv, pair=pair, ohlc_ticker=a.ohlc_ticker,
+                 tickers=tuple(a.tickers.split(",")) if a.tickers else None, start=a.start,
+                 end=a.end, seed=a.seed, cost_bps=a.cost_bps, refresh=a.refresh, offline=a.offline)
+    inp = Inputs(cfg)
     try:
-        _run(args)
+        if not a.study:
+            demo(inp, a.out)
+        for name in (STUDIES if a.study == "all" else [a.study] if a.study else []):
+            print(render(STUDIES[name](inp)))
     except DataSourceError as e:
         ap.exit(2, f"data error: {e}\n")
-
-
-def _run(args: argparse.Namespace) -> None:
-    if args.study:
-        run_studies(args)
-        return
-
-    prices = load_universe(args)
-    print(f"Universe: {prices.shape[1]} assets, {len(prices)} days "
-          f"({prices.index[0].date()} -> {prices.index[-1].date()}), cost {args.cost_bps} bps\n")
-
-    results = run_all(prices, args.cost_bps)
-    rets = pd.DataFrame({n: r.returns for n, r in results.items()})
-    port = combine_inverse_vol(rets)
-
-    stats = {n: r.summary() for n, r in results.items()}
-    stats["PORTFOLIO"] = performance_summary(port)
-    print(format_table(summary_table(stats)))
-    print("\nStrategy return correlations:")
-    print(rets.corr().round(2).to_string())
-    print(f"\nChart saved to {plot_report(rets, port, args.out)}")
 
 
 if __name__ == "__main__":

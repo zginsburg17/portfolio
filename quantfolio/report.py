@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from .metrics import drawdown, equity_curve
+from .results import StudyResult
 
 
 def summary_table(stats: dict[str, dict[str, float]]) -> pd.DataFrame:
@@ -25,6 +26,15 @@ def format_table(df: pd.DataFrame) -> str:
             "-" if pd.isna(v) else (f"{v:.1%}" if col in pct else f"{v:.2f}") for v in df[col]
         ]
     return out.to_string()
+
+
+def render(result: StudyResult) -> str:
+    """Plain-text rendering of a study: a banner, then each section."""
+    out = [f"\n{'=' * 8} {result.title} {'=' * 8}"]
+    for sec in result.sections:
+        body = sec.body if isinstance(sec.body, str) else sec.body.round(3).to_string()
+        out.append(f"\n{sec.heading}\n{body}")
+    return "\n".join(out)
 
 
 def plot_report(

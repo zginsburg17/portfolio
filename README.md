@@ -69,7 +69,7 @@ The tests check that these tools reject the null: on a zero-edge random walk the
 
 ## Technique studies (from the Systematic Investing coursework)
 
-`python -m quantfolio --study {trend,pairs,countertrend,risk,vol,all}` runs one study per technique family. Each assignment's setup is generalized into reusable library code:
+`python -m quantfolio --study {trend,pairs,countertrend,risk,vol,validation,attribution,all}` runs one study per technique family. Each assignment's setup is generalized into reusable library code:
 
 | Study | Concepts implemented | Where |
 |---|---|---|
@@ -79,11 +79,13 @@ The tests check that these tools reject the null: on a zero-edge random walk the
 | **risk** | Pairwise correlation, equal vs inverse-vol combination, drawdown, lead-lag predictability via OLS with t-stats | `portfolio.combine_equal`, `stats.ols`; `studies.risk_study` |
 | **vol** | Trailing z-scores (excluding today, N=250), quintile buckets of zvol vs concurrent and forward normalized returns | `stats.zscore_trailing`, `quintile_table`; `studies.vol_study` |
 
+**How studies get data.** `inputs.Inputs` resolves each study's data from one `Config` (synthetic, `--source yahoo`, or `--csv`) and memoizes it. The pairs study takes `--pair KO,PEP` and the countertrend study `--ohlc-ticker SPY`; Yahoo OHLC bars are rescaled by adj_close/close so splits create no fake gaps. A source that can't provide an input (for example OHLC from a close-only CSV) raises an error instead of substituting synthetic data. **What studies return.** Each study returns a `StudyResult` (titled sections of DataFrames or text, plus a `metrics` dict of headline numbers); `report.render` is the only place that formats it, so results can be tested, saved or plotted without parsing stdout. Adding a study is one function plus one line in `studies.STUDIES`.
+
 Cross-cutting conventions that carry through every strategy: signals use information through day *t* and trade at *t+1*; z-scores exclude the current observation; position sizing is inversely proportional to trailing volatility; and performance is always judged net of costs, on Sharpe *and* drawdown, not CAGR alone.
 
 Caveat on the countertrend "blank" Sharpe: annualizing with sqrt(252) over only the days a signal fired (a few dozen per decade) wildly overstates it. Compare it with the zero-filled Sharpe, which reflects capital actually deployed.
 
-All studies run on synthetic data by default; point `--csv` at real prices (the pairs/countertrend studies use built-in synthetic pair/OHLC data for now) for real conclusions.
+All studies run on synthetic data by default. Use `--source yahoo` (or `--csv` for close-only studies) for real conclusions.
 
 ## Design notes
 
