@@ -110,3 +110,53 @@ def vol_study(price: pd.Series, vol_window: int = 20, z_window: int = 250) -> No
     print(t.round(3).to_string())
     print("\nConcurrent: high vol coincides with weak returns if zret falls across buckets.\n"
           "Lead-lag: if zfret rises with zvol, high-vol periods preceded better forward returns.")
+
+
+def validation_study(prices: pd.DataFrame, cost_bps: float = 5.0) -> None:
+    """How much of a 'best parameters' backtest survives honest testing?"""
+    from .strategies import ma_crossover
+    from .validation import (bootstrap_sharpe_ci, deflated_sharpe, probabilistic_sharpe,
+                             sensitivity_grid, walk_forward)
+
+    _hdr("VALIDATION: in-sample optimum vs out-of-sample reality")
+
+    def factory(p, fast, slow):
+        return ma_crossover(p, fast, slow) / p.shape[1]
+
+    grid = {"fast": [5, 10, 20, 30, 40], "slow": [60, 80, 100, 150, 200]}
+    wf = walk_forward(prices, factory, grid, cost_bps=cost_bps)
+    sharpes = wf.trials.apply(sharpe)
+    n_trials = len(sharpes)
+    best_key = sharpes.idxmax()
+    best = wf.trials[best_key]
+    print(f"Trials: {n_trials} parameter sets. Full-sample best {dict(best_key)} -> "
+          f"Sharpe {sharpes.max():.2f} (this number is selection-biased).")
+    print(f"Walk-forward over {len(wf.folds)} folds: mean in-sample Sharpe {wf.is_sharpe:.2f} "
+          f"vs out-of-sample Sharpe {wf.oos_sharpe:.2f}")
+    print(f"Parameters chosen per fold: {wf.folds['params'].astype(str).nunique()} distinct "
+          f"(unstable choice = fragile edge)")
+
+    ci = bootstrap_sharpe_ci(wf.oos_returns)
+    print(f"\nOOS Sharpe 95% bootstrap CI: [{ci['lo']:.2f}, {ci['hi']:.2f}]  "
+          f"P(Sharpe<=0) = {ci['p_le_zero']:.1%}  ({ci['n_days']} days)")
+    print(f"Probabilistic Sharpe, OOS (P true SR > 0): {probabilistic_sharpe(wf.oos_returns):.1%}")
+    var = float((sharpes ** 2).mean() - sharpes.mean() ** 2)
+    print(f"Deflated Sharpe of the full-sample winner (P true SR > luck-adjusted hurdle): "
+          f"{deflated_sharpe(best, n_trials, var):.1%}")
+
+    hm = sensitivity_grid(prices, factory, ("slow", grid["slow"]), ("fast", grid["fast"]),
+                          cost_bps=cost_bps)
+    print("\nSharpe sensitivity (rows = fast MA, cols = slow MA):")
+    print(hm.round(2).to_string())
+
+
+def attribution_study(strategy_returns: pd.DataFrame, factors: pd.DataFrame,
+                      rf_col: str | None = "RF") -> None:
+    """Regress each strategy on factors: is there alpha beyond the exposures?"""
+    from .attribution import attribution_table
+
+    _hdr("ATTRIBUTION: alpha vs factor exposure (Newey-West t-stats)")
+    tbl = attribution_table(strategy_returns, factors, rf_col)
+    print(tbl.round(3).to_string())
+    print("\nRead: |alpha t| > 2 suggests alpha beyond the listed factors; a high R2 with a large "
+          "market beta means the strategy is mostly repackaged exposure.")

@@ -8,7 +8,7 @@ import pandas as pd
 
 from .backtest import backtest
 from . import studies
-from .datasources import LARGE_CAP, DataSourceError, clean_panel, fetch_prices
+from .datasources import LARGE_CAP, DataSourceError, clean_panel, fetch_factors, fetch_prices
 from .data import load_prices_csv, synthetic_ohlc, synthetic_pair, synthetic_prices
 from .metrics import performance_summary
 from .portfolio import combine_inverse_vol, correlation_matrix
@@ -40,6 +40,20 @@ def run_studies(args: argparse.Namespace) -> None:
         studies.risk_study(prices.pct_change().dropna())
     if want("vol"):
         studies.vol_study(prices.mean(axis=1))
+    if want("validation"):
+        studies.validation_study(prices, cost_bps=args.cost_bps)
+    if want("attribution"):
+        rets = pd.DataFrame({n: backtest(prices, fn(prices), cost_bps=args.cost_bps).returns
+                             for n, fn in STRATEGIES.items()})
+        if args.source == "yahoo" and not args.csv:
+            fac = fetch_factors("ff5", args.start, args.end, refresh=args.refresh, offline=args.offline)
+            fac = fac.join(fetch_factors("mom", args.start, args.end, refresh=args.refresh,
+                                         offline=args.offline), how="inner")
+            studies.attribution_study(rets, fac, "RF")
+        else:
+            print("\n(synthetic/CSV data: using the universe's equal-weight return as the only "
+                  "'market' factor; use --source yahoo for Fama-French factors)")
+            studies.attribution_study(rets, pd.DataFrame({"MKT": prices.pct_change().mean(axis=1)}), None)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -55,7 +69,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--cost-bps", type=float, default=5.0)
     ap.add_argument("--out", default="output/report.png")
-    ap.add_argument("--study", choices=["trend", "pairs", "countertrend", "risk", "vol", "all"],
+    ap.add_argument("--study", choices=["trend", "pairs", "countertrend", "risk", "vol", "validation", "attribution", "all"],
                     help="run a technique study instead of the multi-strategy demo")
     args = ap.parse_args(argv)
 

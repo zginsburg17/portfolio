@@ -47,6 +47,26 @@ python -m quantfolio --source yahoo --offline                               # ca
 
 `datasources/universe.py` ships a sector-tagged large-cap list. It is a *current* snapshot, so it carries survivorship bias; see the warning in that file before trusting long-horizon results.
 
+## Validation and attribution
+
+Backtests flatter. These tools discount a result for noise, selection and fragility, and test whether the returns are alpha or just factor exposure.
+
+| Question | Tool | Module |
+|---|---|---|
+| How uncertain is this Sharpe? | Circular block-bootstrap CI; probabilistic Sharpe ratio (skew/kurtosis-aware) | `validation.bootstrap_sharpe_ci`, `probabilistic_sharpe` |
+| Did I just pick the luckiest of N variants? | Expected-max-Sharpe hurdle and deflated Sharpe ratio | `validation.expected_max_sharpe`, `deflated_sharpe` |
+| Does it work on data it wasn't tuned on? | Rolling/anchored walk-forward with per-fold parameter selection | `validation.walk_forward` |
+| Is the edge a plateau or a spike? | 2-D parameter sensitivity grid | `validation.sensitivity_grid` |
+| Is it alpha or beta? | Factor regression (FF5 + momentum) with Newey-West t-stats; rolling-beta hedge | `attribution.factor_regression`, `beta_hedge` |
+
+```bash
+python -m quantfolio --study validation                                  # synthetic data
+python -m quantfolio --source yahoo --study validation --start 2010-01-01
+python -m quantfolio --source yahoo --study attribution                  # needs Ken French factors
+```
+
+The tests check that these tools reject the null: on a zero-edge random walk the walk-forward out-of-sample Sharpe is below the in-sample one, its bootstrap CI spans zero, and the probabilistic Sharpe of pure noise is spread across [0, 1] rather than clustered near 1. The default synthetic data has a planted trend, so the validation study "passing" there is only a plumbing check. The conclusions that matter come from real data.
+
 ## Technique studies (from the Systematic Investing coursework)
 
 `python -m quantfolio --study {trend,pairs,countertrend,risk,vol,all}` runs one study per technique family. Each assignment's setup is generalized into reusable library code:

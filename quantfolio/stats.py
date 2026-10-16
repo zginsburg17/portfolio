@@ -42,6 +42,39 @@ def ols(y: pd.Series, X: pd.DataFrame) -> dict:
     }
 
 
+def ols_hac(y: pd.Series, X: pd.DataFrame, lags: int | None = None) -> dict:
+    """OLS with intercept and Newey-West (HAC) standard errors.
+
+    Daily strategy returns are autocorrelated and heteroskedastic, so plain OLS
+    t-stats overstate significance. Bartlett kernel; default lag is the
+    Newey-West rule of thumb 4*(n/100)^(2/9).
+    """
+    df = pd.concat([y.rename("y"), X], axis=1).dropna()
+    yv = df["y"].to_numpy()
+    A = np.column_stack([np.ones(len(df)), df.drop(columns="y").to_numpy()])
+    n, k = A.shape
+    beta, *_ = np.linalg.lstsq(A, yv, rcond=None)
+    e = yv - A @ beta
+    L = int(4 * (n / 100) ** (2 / 9)) if lags is None else lags
+    Xe = A * e[:, None]
+    S = Xe.T @ Xe
+    for lag in range(1, L + 1):
+        G = Xe[lag:].T @ Xe[:-lag]
+        S += (1 - lag / (L + 1)) * (G + G.T)
+    bread = np.linalg.inv(A.T @ A)
+    se = np.sqrt(np.diag(bread @ S @ bread))
+    names = ["const", *df.drop(columns="y").columns]
+    ss_tot = ((yv - yv.mean()) ** 2).sum()
+    return {
+        "coef": dict(zip(names, beta)),
+        "se": dict(zip(names, se)),
+        "tstat": dict(zip(names, beta / se)),
+        "r2": float(1 - e @ e / ss_tot) if ss_tot > 0 else 0.0,
+        "n": int(n),
+        "lags": L,
+    }
+
+
 def adf_test(series: pd.Series) -> dict:
     """Dickey-Fuller test: regress delta_t on level_{t-1} (with intercept).
 
