@@ -18,14 +18,31 @@ def summary_table(stats: dict[str, dict[str, float]]) -> pd.DataFrame:
     return pd.DataFrame(stats).T
 
 
+PCT_COLUMNS = {"CAGR", "Ann. Vol", "Max DD", "Hit Rate", "alpha (ann)"}
+
+
+def _fmt(col: str, v: float, nd: int = 2) -> str:
+    if pd.isna(v):
+        return "-"
+    if col in PCT_COLUMNS:
+        return f"{v:.1%}"
+    return f"{v:.0f}" if col == "rebalances" else f"{v:.{nd}f}"
+
+
 def format_table(df: pd.DataFrame) -> str:
-    pct = {"CAGR", "Ann. Vol", "Max DD", "Hit Rate"}
     out = df.copy().astype(object)
     for col in df.columns:
-        out[col] = [
-            "-" if pd.isna(v) else (f"{v:.1%}" if col in pct else f"{v:.2f}") for v in df[col]
-        ]
+        out[col] = [_fmt(col, v) for v in df[col]]
     return out.to_string()
+
+
+def markdown_table(df: pd.DataFrame, nd: int = 2) -> str:
+    """GitHub-flavoured markdown table; percent-type columns formatted as percentages."""
+    cols = [str(df.index.name or "")] + [str(c) for c in df.columns]
+    rows = [[str(i)] + [_fmt(c, v, nd) if isinstance(v, (int, float)) else str(v)
+                        for c, v in zip(df.columns, r)] for i, r in zip(df.index, df.to_numpy())]
+    lines = ["| " + " | ".join(cols) + " |", "|" + "|".join(["---"] + ["---:"] * (len(cols) - 1)) + "|"]
+    return "\n".join(lines + ["| " + " | ".join(r) + " |" for r in rows])
 
 
 def render(result: StudyResult) -> str:

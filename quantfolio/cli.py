@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import os
+from pathlib import Path
 
 import pandas as pd
 
@@ -42,6 +44,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--cost-bps", type=float, default=5.0)
     ap.add_argument("--out", default="output/report.png")
+    ap.add_argument("--report", metavar="PATH",
+                    help="write the markdown research report (neutral strategy) to PATH")
     ap.add_argument("--study", choices=[*STUDIES, "all"],
                     help="run a technique study instead of the multi-strategy demo")
     return ap
@@ -58,6 +62,15 @@ def main(argv: list[str] | None = None) -> None:
                  end=a.end, seed=a.seed, cost_bps=a.cost_bps, refresh=a.refresh, offline=a.offline)
     inp = Inputs(cfg)
     try:
+        if a.report:
+            from .writeup import build_report
+            out = Path(a.report).resolve()
+            out.parent.mkdir(parents=True, exist_ok=True)
+            note = Path(__file__).resolve().parents[1] / "docs" / "METHODOLOGY.md"
+            link = os.path.relpath(note, out.parent) if note.exists() else None
+            out.write_text(build_report(inp, methodology_link=link))
+            print(f"Report written to {a.report}")
+            return
         if not a.study:
             demo(inp, a.out)
         for name in (STUDIES if a.study == "all" else [a.study] if a.study else []):

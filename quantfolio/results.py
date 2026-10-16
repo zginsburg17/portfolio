@@ -22,8 +22,15 @@ class StudyResult:
     def add(self, heading: str, body: pd.DataFrame | str) -> None:
         self.sections.append(Section(heading, body))
 
-    def table(self, heading: str) -> pd.DataFrame:
+    def table(self, heading_prefix: str) -> pd.DataFrame:
+        """The first table section whose heading starts with `heading_prefix`."""
         for s in self.sections:
-            if s.heading == heading and isinstance(s.body, pd.DataFrame):
+            if s.heading.startswith(heading_prefix) and isinstance(s.body, pd.DataFrame):
                 return s.body
-        raise KeyError(heading)
+        raise KeyError(heading_prefix)
+
+    def text(self, heading_prefix: str) -> str:
+        for s in self.sections:
+            if s.heading.startswith(heading_prefix) and isinstance(s.body, str):
+                return s.body
+        raise KeyError(heading_prefix)

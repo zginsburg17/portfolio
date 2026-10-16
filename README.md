@@ -58,6 +58,11 @@ python -m quantfolio --source yahoo --start 2005-01-01 --study neutral   # the r
 
 On the built-in synthetic data the neutral book is weak (out-of-sample Sharpe about 0.4, interval spanning zero). That is the expected answer there, since the simulated drifts decay over weeks and a 12-1 signal shouldn't work, and it shows the validation tools refusing to be impressed. The real-data result is the one to write up, whichever way it comes out.
 
+## Research write-up
+
+- [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md): the full method, including the beta-projection derivation, the validation stack, how the code is tested, and the limitations.
+- `python -m quantfolio --source yahoo --start 2005-01-01 --report output/report.md` generates the results report from an actual run: data provenance, variant comparison, constraint check, factor attribution, walk-forward validation, and a plain-language verdict. The verdict is worded by fixed, pre-committed rules (`writeup.verdict`), so it cannot claim more than the statistics support; synthetic runs carry a banner saying they are not evidence. Commit the real report (for example as `docs/REPORT.md`) once you have run it on real data.
+
 ## Validation and attribution
 
 Backtests flatter. These tools discount a result for noise, selection and fragility, and test whether the returns are alpha or just factor exposure.

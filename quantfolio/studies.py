@@ -220,7 +220,8 @@ def neutral_study(prices: pd.DataFrame, sectors: pd.Series, factors: pd.DataFram
     ci = bootstrap_sharpe_ci(wf.oos_returns)
     psr = probabilistic_sharpe(wf.oos_returns)
     dsr = deflated_sharpe(wf.trials[trial_sr.idxmax()], len(trial_sr), float(trial_sr.var(ddof=0)))
-    res.metrics.update(oos_sharpe=wf.oos_sharpe, is_sharpe=wf.is_sharpe, oos_ci_lo=ci["lo"],
+    res.metrics.update(n_trials=len(trial_sr), oos_sharpe=wf.oos_sharpe, is_sharpe=wf.is_sharpe,
+                       oos_ci_lo=ci["lo"],
                        oos_ci_hi=ci["hi"], psr=psr, dsr=dsr)
     res.add("Walk-forward validation (grid: lookback x reversal weight)",
             f"In-sample Sharpe {wf.is_sharpe:.2f} vs out-of-sample {wf.oos_sharpe:.2f} over "
