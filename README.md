@@ -22,6 +22,31 @@ pytest
 | `quantfolio/portfolio.py` | Inverse-vol strategy blending with a lagged vol-target overlay |
 | `quantfolio/report.py` | Equity-curve / drawdown chart and formatted tables |
 
+## Public data sources
+
+No API keys needed. Everything is cached on disk (`~/.cache/quantfolio`, override with `QUANTFOLIO_CACHE`), so reruns are fast and reproducible, and a provider outage falls back to the stale cache.
+
+| Source | Module | Provides | Host |
+|---|---|---|---|
+| Yahoo Finance | `datasources.yahoo` | Daily OHLCV, split/dividend-adjusted close | `query1.finance.yahoo.com` |
+| FRED | `datasources.fred` | Rates, VIX, credit spreads, any macro series | `fred.stlouisfed.org` |
+| Ken French library | `datasources.famafrench` | Daily FF3 / FF5 / momentum factors for attribution | `mba.tuck.dartmouth.edu` |
+
+```python
+from quantfolio.datasources import fetch_prices, fetch_series, fetch_factors, clean_panel, LARGE_CAP
+px = clean_panel(fetch_prices(LARGE_CAP, "2010-01-01"))      # adjusted closes, strategy-ready
+rf = fetch_series("DGS3MO", "2010-01-01")                    # 3-month T-bill
+fac = fetch_factors("ff5", "2010-01-01")                     # market, size, value, profitability, investment
+```
+
+```bash
+python -m quantfolio --source yahoo --start 2012-01-01                      # demo on the large-cap universe
+python -m quantfolio --source yahoo --tickers SPY,TLT,GLD,QQQ --study trend
+python -m quantfolio --source yahoo --offline                               # cache only, never the network
+```
+
+`datasources/universe.py` ships a sector-tagged large-cap list. It is a *current* snapshot, so it carries survivorship bias; see the warning in that file before trusting long-horizon results.
+
 ## Technique studies (from the Systematic Investing coursework)
 
 `python -m quantfolio --study {trend,pairs,countertrend,risk,vol,all}` runs one study per technique family. Each assignment's setup is generalized into reusable library code:
