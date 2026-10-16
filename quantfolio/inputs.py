@@ -14,8 +14,8 @@ import pandas as pd
 
 from .backtest import BacktestResult
 from .data import load_prices_csv, synthetic_ohlc, synthetic_pair, synthetic_prices
-from .datasources import (LARGE_CAP, DataSourceError, clean_panel, fetch_bars, fetch_factors,
-                          fetch_prices)
+from .datasources import (LARGE_CAP, SECTOR_OF, DataSourceError, clean_panel, fetch_bars,
+                          fetch_factors, fetch_prices)
 from .strategies import run_all
 
 
@@ -56,6 +56,18 @@ class Inputs:
             return clean_panel(fetch_prices(list(c.tickers or LARGE_CAP), c.start, c.end,
                                             **c._fetch_kw))
         return synthetic_prices(seed=c.seed)
+
+    @cached_property
+    def sectors(self) -> pd.Series:
+        """Sector of every column in `prices`. Synthetic data gets arbitrary sectors of two."""
+        cols = list(self.prices.columns)
+        if not (self.cfg.live or self.cfg.csv):
+            return pd.Series({c: f"S{i // 2}" for i, c in enumerate(cols)})
+        missing = [c for c in cols if c not in SECTOR_OF]
+        if missing:
+            raise DataSourceError(f"no sector mapping for {missing}; the neutral study needs "
+                                  "tickers from the built-in universe (datasources/universe.py)")
+        return pd.Series({c: SECTOR_OF[c] for c in cols})
 
     @cached_property
     def pair(self) -> pd.DataFrame:

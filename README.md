@@ -47,6 +47,17 @@ python -m quantfolio --source yahoo --offline                               # ca
 
 `datasources/universe.py` ships a sector-tagged large-cap list. It is a *current* snapshot, so it carries survivorship bias; see the warning in that file before trusting long-horizon results.
 
+## The flagship strategy: sector- and beta-neutral stock selection
+
+`neutral.neutral_weights` builds a unit-gross long/short book whose net exposure to every sector is exactly zero and whose ex-ante beta to the market is exactly zero, so returns come from stock selection rather than sector or market bets. The beta step moves weights along the sector-demeaned beta direction, which sums to zero inside each sector, so the two constraints don't fight each other. `neutral.exposure_check` verifies gross, net, per-sector net and beta on the dates the book was rebalanced; the test suite also plants a known signal (strategy must find it), plants a trending market (realized beta must be removed), and mutation-checks that any look-ahead in the momentum, reversal or beta estimates fails the no-look-ahead test.
+
+```bash
+python -m quantfolio --study neutral                        # synthetic plumbing check
+python -m quantfolio --source yahoo --start 2005-01-01 --study neutral   # the real run
+```
+
+On the built-in synthetic data the neutral book is weak (out-of-sample Sharpe about 0.4, interval spanning zero). That is the expected answer there, since the simulated drifts decay over weeks and a 12-1 signal shouldn't work, and it shows the validation tools refusing to be impressed. The real-data result is the one to write up, whichever way it comes out.
+
 ## Validation and attribution
 
 Backtests flatter. These tools discount a result for noise, selection and fragility, and test whether the returns are alpha or just factor exposure.
@@ -69,7 +80,7 @@ The tests check that these tools reject the null: on a zero-edge random walk the
 
 ## Technique studies (from the Systematic Investing coursework)
 
-`python -m quantfolio --study {trend,pairs,countertrend,risk,vol,validation,attribution,all}` runs one study per technique family. Each assignment's setup is generalized into reusable library code:
+`python -m quantfolio --study {trend,pairs,countertrend,risk,vol,validation,attribution,neutral,all}` runs one study per technique family. Each assignment's setup is generalized into reusable library code:
 
 | Study | Concepts implemented | Where |
 |---|---|---|
@@ -77,6 +88,7 @@ The tests check that these tools reject the null: on a zero-edge random walk the
 | **pairs** | Dickey-Fuller stationarity test on the price *difference*; z-scored N-day returns (5/10/20d, 60-day window); zdiff entry thresholds, profit targets, holding period; legs sized by inverse 20d vol | `stats.adf_test`, `strategies.pairs_spread`; `studies.pairs_study` |
 | **countertrend** | Entry at `prev high - P*avg 20d range`, exit at close, gap-through fills at the open; P sweep 2.2 to 0.8; Sharpe with zero vs blank no-signal days; 2x2 market-vs-strategy matrix; short-side mirror | `countertrend.py`; `studies.countertrend_study` |
 | **risk** | Pairwise correlation, equal vs inverse-vol combination, drawdown, lead-lag predictability via OLS with t-stats | `portfolio.combine_equal`, `stats.ols`; `studies.risk_study` |
+| **neutral** | Sector- and beta-neutral long/short: 12-1 momentum + 1-month reversal, demeaned within sectors, then projected to zero ex-ante beta without breaking sector neutrality; monthly rebalance; compared against raw and sector-only versions; constraint check, market and Fama-French attribution, walk-forward validation | `neutral.py`; `studies.neutral_study` |
 | **vol** | Trailing z-scores (excluding today, N=250), quintile buckets of zvol vs concurrent and forward normalized returns | `stats.zscore_trailing`, `quintile_table`; `studies.vol_study` |
 
 **How studies get data.** `inputs.Inputs` resolves each study's data from one `Config` (synthetic, `--source yahoo`, or `--csv`) and memoizes it. The pairs study takes `--pair KO,PEP` and the countertrend study `--ohlc-ticker SPY`; Yahoo OHLC bars are rescaled by adj_close/close so splits create no fake gaps. A source that can't provide an input (for example OHLC from a close-only CSV) raises an error instead of substituting synthetic data. **What studies return.** Each study returns a `StudyResult` (titled sections of DataFrames or text, plus a `metrics` dict of headline numbers); `report.render` is the only place that formats it, so results can be tested, saved or plotted without parsing stdout. Adding a study is one function plus one line in `studies.STUDIES`.

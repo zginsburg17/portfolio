@@ -6,16 +6,18 @@ from typing import Callable
 
 import pandas as pd
 
-from .attribution import attribution_table
+from .attribution import attribution_table, factor_regression
 from .backtest import backtest
 from .countertrend import countertrend, market_vs_strategy, sharpe_of, sweep_p
 from .inputs import Inputs
 from .metrics import drawdown, performance_summary, sharpe, sharpes, sortino
+from .neutral import exposure_check, neutral_weights
 from .portfolio import combine_equal, combine_inverse_vol
 from .report import summary_table
 from .results import StudyResult
 from .stats import adf_test, ols, quintile_table, zscore_trailing
-from .strategies import TREND_SYSTEMS, equal_weight, ma_crossover, pairs_spread
+from .strategies import (TREND_SYSTEMS, cross_sectional_momentum, equal_weight, ma_crossover,
+                         pairs_spread)
 from .validation import (bootstrap_sharpe_ci, deflated_sharpe, probabilistic_sharpe,
                          sensitivity_grid, walk_forward)
 
@@ -169,6 +171,67 @@ def attribution_study(strategy_returns: pd.DataFrame, factors: pd.DataFrame,
     return res
 
 
+def neutral_study(prices: pd.DataFrame, sectors: pd.Series, factors: pd.DataFrame,
+                  rf_col: str | None = "RF", factor_note: str = "",
+                  cost_bps: float = 5.0) -> StudyResult:
+    """Sector- and beta-neutral stock selection: does neutralizing remove the bets that
+    aren't stock selection, and is what remains statistically distinguishable from luck?"""
+    res = StudyResult("NEUTRAL: sector- and beta-neutral cross-sectional momentum + reversal")
+    min_names = int(min(3, sectors.reindex(prices.columns).value_counts().min()))
+
+    def build(**kw):
+        return neutral_weights(prices, sectors, min_names=min_names, **kw)
+
+    variants = {
+        "raw xs momentum": cross_sectional_momentum(prices),
+        "sector-neutral": build(beta_neutral=False),
+        "sector+beta neutral": build(beta_neutral=True),
+    }
+    bts = {n: backtest(prices, w, cost_bps=cost_bps) for n, w in variants.items()}
+    rets = pd.DataFrame({n: b.returns for n, b in bts.items()})
+    mkt = pd.DataFrame({"MKT": prices.pct_change().mean(axis=1)})
+
+    rows = {}
+    for n, b in bts.items():
+        s, reg = performance_summary(b.returns), factor_regression(b.returns, mkt, rf_col=None)
+        rows[n] = {"Sharpe": s["Sharpe"], "CAGR": s["CAGR"], "Ann. Vol": s["Ann. Vol"],
+                   "Max DD": s["Max DD"], "Daily turnover": float(b.turnover.mean()),
+                   "mkt beta": reg["betas"]["MKT"], "beta t": reg["beta_t"]["MKT"],
+                   "alpha (ann)": reg["alpha_ann"], "alpha t": reg["alpha_t"]}
+    res.add("Variants, net of costs, vs the universe's equal-weight market", pd.DataFrame(rows).T)
+    final = "sector+beta neutral"
+    res.metrics.update(sharpe=rows[final]["Sharpe"], realized_beta=rows[final]["mkt beta"],
+                       raw_realized_beta=rows["raw xs momentum"]["mkt beta"])
+
+    chk = exposure_check(variants[final], prices, sectors)
+    res.add("Constraint check on rebalance dates (should be ~0, gross 1)",
+            pd.DataFrame({k: [v] for k, v in chk.items()}, index=[final]))
+    res.add(f"Factor attribution ({factor_note or 'given factors'})",
+            attribution_table(rets, factors, rf_col))
+
+    # honest out-of-sample evidence: pick (lookback, reversal weight) on past data only
+    grid = {"lookback": [126, 189, 252], "w_rev": [0.0, 0.5, 1.0]}
+    if len(prices) < 756 + 126 + 300:
+        res.add("Validation", "skipped: needs about 5 years of daily history.")
+        return res
+    wf = walk_forward(prices, lambda p, lookback, w_rev: neutral_weights(
+        p, sectors, lookback=lookback, w_rev=w_rev, min_names=min_names), grid, cost_bps=cost_bps)
+    trial_sr = sharpes(wf.trials)
+    ci = bootstrap_sharpe_ci(wf.oos_returns)
+    psr = probabilistic_sharpe(wf.oos_returns)
+    dsr = deflated_sharpe(wf.trials[trial_sr.idxmax()], len(trial_sr), float(trial_sr.var(ddof=0)))
+    res.metrics.update(oos_sharpe=wf.oos_sharpe, is_sharpe=wf.is_sharpe, oos_ci_lo=ci["lo"],
+                       oos_ci_hi=ci["hi"], psr=psr, dsr=dsr)
+    res.add("Walk-forward validation (grid: lookback x reversal weight)",
+            f"In-sample Sharpe {wf.is_sharpe:.2f} vs out-of-sample {wf.oos_sharpe:.2f} over "
+            f"{len(wf.folds)} folds.\n"
+            f"OOS Sharpe 95% bootstrap CI [{ci['lo']:.2f}, {ci['hi']:.2f}], "
+            f"P(Sharpe<=0) = {ci['p_le_zero']:.1%}.\n"
+            f"Probabilistic Sharpe (OOS) {psr:.1%}; deflated Sharpe of the best of "
+            f"{len(trial_sr)} variants {dsr:.1%}.")
+    return res
+
+
 # name -> adapter pulling exactly the inputs that study needs. Adding a study = one line here.
 STUDIES: dict[str, Callable[[Inputs], StudyResult]] = {
     "trend": lambda i: trend_study(i.prices),
@@ -177,5 +240,7 @@ STUDIES: dict[str, Callable[[Inputs], StudyResult]] = {
     "risk": lambda i: risk_study(i.prices.pct_change().dropna()),
     "vol": lambda i: vol_study(i.prices.mean(axis=1)),
     "validation": lambda i: validation_study(i.prices, i.cfg.cost_bps),
+    "neutral": lambda i: neutral_study(i.prices, i.sectors, i.factors[0], i.factors[1],
+                                       i.factors[2], i.cfg.cost_bps),
     "attribution": lambda i: attribution_study(i.strategy_returns, *i.factors[:2], note=i.factors[2]),
 }
