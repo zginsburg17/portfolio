@@ -6,8 +6,13 @@ import numpy as np
 import pandas as pd
 
 
+def combine_equal(strategy_returns: pd.DataFrame) -> pd.Series:
+    """Equal-weight the return streams (daily rebalanced)."""
+    return strategy_returns.mean(axis=1)
+
+
 def combine_inverse_vol(
-    strategy_returns: pd.DataFrame, window: int = 60, target_vol: float = 0.10
+    strategy_returns: pd.DataFrame, window: int = 60, target_vol: float | None = 0.10
 ) -> pd.Series:
     """Inverse-volatility weighting, rebalanced daily with a lag, scaled to target vol.
 
@@ -17,6 +22,8 @@ def combine_inverse_vol(
     inv = 1.0 / vol.replace(0, np.nan)
     w = inv.div(inv.sum(axis=1), axis=0)
     raw = (w * strategy_returns).sum(axis=1, min_count=1)
+    if target_vol is None:
+        return raw.dropna()
 
     port_vol = raw.rolling(window).std().shift(1) * np.sqrt(252)
     leverage = (target_vol / port_vol).clip(upper=3.0)

@@ -22,6 +22,24 @@ pytest
 | `quantfolio/portfolio.py` | Inverse-vol strategy blending with a lagged vol-target overlay |
 | `quantfolio/report.py` | Equity-curve / drawdown chart and formatted tables |
 
+## Technique studies (from the Systematic Investing coursework)
+
+`python -m quantfolio --study {trend,pairs,countertrend,risk,vol,all}` runs one study per technique family. Each assignment's setup is generalized into reusable library code:
+
+| Study | Concepts implemented | Where |
+|---|---|---|
+| **trend** | MA crossovers 10/30, 30/100, 80/160, 30-day breakout, EMA vs SMA; best-per-instrument selection; equal-weight vs inverse-20d-vol combination; Sharpe/Sortino; max drawdown and its date | `strategies.ma_crossover`, `breakout`, `TREND_SYSTEMS`; `studies.trend_study` |
+| **pairs** | Dickey-Fuller stationarity test on the price *difference*; z-scored N-day returns (5/10/20d, 60-day window); zdiff entry thresholds, profit targets, holding period; legs sized by inverse 20d vol | `stats.adf_test`, `strategies.pairs_spread`; `studies.pairs_study` |
+| **countertrend** | Entry at `prev high - P*avg 20d range`, exit at close, gap-through fills at the open; P sweep 2.2 to 0.8; Sharpe with zero vs blank no-signal days; 2x2 market-vs-strategy matrix; short-side mirror | `countertrend.py`; `studies.countertrend_study` |
+| **risk** | Pairwise correlation, equal vs inverse-vol combination, drawdown, lead-lag predictability via OLS with t-stats | `portfolio.combine_equal`, `stats.ols`; `studies.risk_study` |
+| **vol** | Trailing z-scores (excluding today, N=250), quintile buckets of zvol vs concurrent and forward normalized returns | `stats.zscore_trailing`, `quintile_table`; `studies.vol_study` |
+
+Cross-cutting conventions that carry through every strategy: signals use information through day *t* and trade at *t+1*; z-scores exclude the current observation; position sizing is inversely proportional to trailing volatility; and performance is always judged net of costs, on Sharpe *and* drawdown, not CAGR alone.
+
+Caveat on the countertrend "blank" Sharpe: annualizing with sqrt(252) over only the days a signal fired (a few dozen per decade) wildly overstates it. Compare it with the zero-filled Sharpe, which reflects capital actually deployed.
+
+All studies run on synthetic data by default; point `--csv` at real prices (the pairs/countertrend studies use built-in synthetic pair/OHLC data for now) for real conclusions.
+
 ## Design notes
 
 - **No look-ahead.** Signals use data through day *t* and are executed on *t+1*; weights and leverage in the portfolio layer are likewise lagged. `tests/test_quantfolio.py::test_no_lookahead_bias` guards this.

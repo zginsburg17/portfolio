@@ -23,6 +23,86 @@ def sma_crossover(prices: pd.DataFrame, fast: int = 20, slow: int = 100) -> pd.D
     return sig / prices.shape[1]
 
 
+def ma_crossover(
+    prices: pd.DataFrame, fast: int, slow: int, kind: str = "sma"
+) -> pd.DataFrame:
+    """Per-instrument +1/-1 trend signal from a fast/slow moving-average crossover.
+
+    kind="ema" uses exponential averages. Flat (0) until the slow average exists.
+    Unscaled: each column is its own +/-1 system (use for single-instrument studies).
+    """
+    if fast >= slow:
+        raise ValueError("fast window must be shorter than slow window")
+    if kind == "ema":
+        f = prices.ewm(span=fast, adjust=False, min_periods=fast).mean()
+        s = prices.ewm(span=slow, adjust=False, min_periods=slow).mean()
+    else:
+        f, s = prices.rolling(fast).mean(), prices.rolling(slow).mean()
+    sig = np.sign(f - s)
+    sig[s.isna() | f.isna()] = 0.0
+    return sig
+
+
+def breakout(prices: pd.DataFrame, window: int = 30) -> pd.DataFrame:
+    """Channel breakout: long on a new `window`-day high, short on a new low, else hold."""
+    hi = prices.shift(1).rolling(window).max()
+    lo = prices.shift(1).rolling(window).min()
+    raw = pd.DataFrame(np.nan, index=prices.index, columns=prices.columns)
+    raw[prices > hi] = 1.0
+    raw[prices < lo] = -1.0
+    return raw.ffill().fillna(0.0)
+
+
+def pairs_spread(
+    prices: pd.DataFrame,
+    lookback: int = 5,
+    z_window: int = 60,
+    entry: float = 1.0,
+    target: float = 1.0,
+    hold: int = 5,
+    vol_window: int = 20,
+) -> pd.DataFrame:
+    """Mean-reversion on the spread of two instruments' normalized N-day returns.
+
+    zdiff = z(ret_A) - z(ret_B), each z-scored against `z_window` trailing values.
+    zdiff > +entry  -> short the spread (short A, long B);
+    zdiff < -entry  -> long the spread (long A, short B).
+    Exit on the holding-period limit or when the profit target is hit
+    (long spread: zdiff >= +target; short spread: zdiff <= -target).
+    Legs are sized inversely to their trailing `vol_window`-day volatility.
+    """
+    from .stats import zscore_trailing
+
+    if prices.shape[1] != 2:
+        raise ValueError("pairs_spread needs exactly two price columns")
+    a, b = prices.columns
+    zret = zscore_trailing(prices.pct_change(lookback), z_window)
+    zdiff = (zret[a] - zret[b]).to_numpy()
+
+    pos = np.zeros(len(zdiff))
+    cur, held = 0, 0
+    for t, z in enumerate(zdiff):
+        if cur != 0:
+            held += 1
+            hit = (cur == 1 and z >= target) or (cur == -1 and z <= -target)
+            if held > hold or hit or np.isnan(z):
+                cur = 0
+        if cur == 0 and not np.isnan(z):
+            if z > entry:
+                cur, held = -1, 1
+            elif z < -entry:
+                cur, held = 1, 1
+        pos[t] = cur
+
+    vol = prices.pct_change().rolling(vol_window).std()
+    inv = 1.0 / vol.replace(0, np.nan)
+    w = inv.div(inv.sum(axis=1), axis=0).fillna(0.0)
+    out = pd.DataFrame(index=prices.index, columns=prices.columns, dtype=float)
+    out[a] = pos * w[a]
+    out[b] = -pos * w[b]
+    return out
+
+
 def time_series_momentum(
     prices: pd.DataFrame, lookback: int = 126, vol_window: int = 60, target_vol: float = 0.10
 ) -> pd.DataFrame:
@@ -79,4 +159,22 @@ STRATEGIES = {
     "tsmom": time_series_momentum,
     "mean_reversion": bollinger_mean_reversion,
     "xs_momentum": cross_sectional_momentum,
+}
+
+
+def _scaled(fn, **kw):
+    """Wrap a per-instrument +/-1 signal so a universe sums to unit gross exposure."""
+
+    def run(prices: pd.DataFrame) -> pd.DataFrame:
+        return fn(prices, **kw) / prices.shape[1]
+
+    return run
+
+
+# Trend systems from the TREND study, keyed by name, as per-instrument +/-1 signals.
+TREND_SYSTEMS = {
+    "MA10/30": lambda p: ma_crossover(p, 10, 30),
+    "MA30/100": lambda p: ma_crossover(p, 30, 100),
+    "MA80/160": lambda p: ma_crossover(p, 80, 160),
+    "Brk30": lambda p: breakout(p, 30),
 }

@@ -7,11 +7,27 @@ import argparse
 import pandas as pd
 
 from .backtest import backtest
-from .data import load_prices_csv, synthetic_prices
+from . import studies
+from .data import load_prices_csv, synthetic_ohlc, synthetic_pair, synthetic_prices
 from .metrics import performance_summary
 from .portfolio import combine_inverse_vol, correlation_matrix
 from .report import format_table, plot_report, summary_table
 from .strategies import STRATEGIES
+
+
+def run_studies(args: argparse.Namespace) -> None:
+    prices = load_prices_csv(args.csv) if args.csv else synthetic_prices(seed=args.seed)
+    want = (lambda k: args.study in (k, "all"))
+    if want("trend"):
+        studies.trend_study(prices, cost_bps=0.0)
+    if want("pairs"):
+        studies.pairs_study(synthetic_pair(), cost_bps=args.cost_bps)
+    if want("countertrend"):
+        studies.countertrend_study(synthetic_ohlc())
+    if want("risk"):
+        studies.risk_study(prices.pct_change().dropna())
+    if want("vol"):
+        studies.vol_study(prices.mean(axis=1))
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -20,7 +36,12 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--cost-bps", type=float, default=5.0)
     ap.add_argument("--out", default="output/report.png")
+    ap.add_argument("--study", choices=["trend", "pairs", "countertrend", "risk", "vol", "all"],
+                    help="run a technique study instead of the multi-strategy demo")
     args = ap.parse_args(argv)
+
+    if args.study:
+        return run_studies(args)
 
     prices = load_prices_csv(args.csv) if args.csv else synthetic_prices(seed=args.seed)
     print(f"Universe: {prices.shape[1]} assets, {len(prices)} days "

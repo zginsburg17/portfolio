@@ -53,3 +53,27 @@ def load_prices_csv(path: str, date_col: str = "Date") -> pd.DataFrame:
     """Load a wide CSV (one column per ticker, one row per date) of close prices."""
     df = pd.read_csv(path, parse_dates=[date_col], index_col=date_col).sort_index()
     return df.dropna(how="all").ffill()
+
+
+def synthetic_ohlc(n_days: int = 252 * 10, seed: int = 7, start: str = "2010-01-01") -> pd.DataFrame:
+    """One instrument with open/high/low/close, for intraday-range strategies."""
+    rng = np.random.default_rng(seed)
+    close = 100 * np.exp(np.cumsum(rng.normal(0.0003, 0.011, n_days)))
+    prev = np.r_[close[0], close[:-1]]
+    open_ = prev * np.exp(rng.normal(0, 0.003, n_days))
+    spread = 0.006
+    high = np.maximum(open_, close) * np.exp(np.abs(rng.normal(0, spread, n_days)))
+    low = np.minimum(open_, close) * np.exp(-np.abs(rng.normal(0, spread, n_days)))
+    idx = pd.bdate_range(start, periods=n_days)
+    return pd.DataFrame({"open": open_, "high": high, "low": low, "close": close}, index=idx)
+
+
+def synthetic_pair(n_days: int = 252 * 6, seed: int = 11, start: str = "2015-01-01") -> pd.DataFrame:
+    """Two prices that share a stochastic trend; their price difference is an OU process."""
+    rng = np.random.default_rng(seed)
+    common = 100 * np.exp(np.cumsum(rng.normal(0.0002, 0.01, n_days)))
+    spread = np.zeros(n_days)
+    for t in range(1, n_days):
+        spread[t] = 0.9 * spread[t - 1] + rng.normal(0, 1.0)
+    idx = pd.bdate_range(start, periods=n_days)
+    return pd.DataFrame({"WHITE": common + spread, "BLACK": common}, index=idx)
