@@ -3,9 +3,9 @@ import pandas as pd
 import pytest
 
 from quantfolio.attribution import beta_hedge, factor_regression
-from quantfolio.metrics import sharpe
+from quantfolio.metrics import sharpes
 from quantfolio.stats import ols, ols_hac
-from quantfolio.strategies import ma_crossover
+from quantfolio.strategies import equal_weight, ma_crossover
 from quantfolio.validation import (bootstrap_sharpe_ci, deflated_sharpe, expected_max_sharpe,
                                    probabilistic_sharpe, sensitivity_grid, walk_forward)
 
@@ -53,9 +53,7 @@ def test_more_trials_raise_the_luck_hurdle_and_lower_deflated_sharpe():
 def test_walk_forward_exposes_overfitting_on_a_zero_edge_market():
     px = random_walk_prices()
 
-    def factory(p, fast, slow):
-        return ma_crossover(p, fast, slow) / p.shape[1]
-
+    factory = equal_weight(ma_crossover)
     grid = {"fast": [5, 10, 20, 30], "slow": [60, 100, 150, 200]}
     wf = walk_forward(px, factory, grid, train_days=504, test_days=126)
     # picking the best-of-16 in sample must look better than it trades out of sample
@@ -71,7 +69,7 @@ def test_walk_forward_exposes_overfitting_on_a_zero_edge_market():
 
 def test_walk_forward_rejects_short_history_and_supports_anchored():
     px = random_walk_prices(n=400)
-    f = lambda p, fast, slow: ma_crossover(p, fast, slow) / p.shape[1]
+    f = equal_weight(ma_crossover)
     with pytest.raises(ValueError):
         walk_forward(px, f, {"fast": [5], "slow": [20]}, train_days=504, test_days=126)
     wf = walk_forward(random_walk_prices(n=900), f, {"fast": [5, 10], "slow": [30, 60]},
@@ -79,13 +77,14 @@ def test_walk_forward_rejects_short_history_and_supports_anchored():
     assert len(wf.folds) == 6
 
 
-def test_sensitivity_grid_shape_and_invalid_cells():
+def test_sensitivity_grid_reuses_trial_sharpes():
     px = random_walk_prices(n=800)
-    f = lambda p, fast, slow: ma_crossover(p, fast, slow) / p.shape[1]
-    g = sensitivity_grid(px, f, ("slow", [20, 60]), ("fast", [10, 30]))
-    assert g.shape == (2, 2)
-    g2 = sensitivity_grid(px, f, ("slow", [20]), ("fast", [30]))  # fast >= slow -> skipped
-    assert g2.isna().all().all()
+    f = equal_weight(ma_crossover)
+    wf = walk_forward(px, f, {"fast": [10, 30], "slow": [60, 120]}, train_days=300, test_days=100)
+    g = sensitivity_grid(sharpes(wf.trials), x="slow", y="fast")
+    assert g.shape == (2, 2) and g.index.name == "fast" and g.columns.name == "slow"
+    key = (("fast", 10), ("slow", 120))
+    assert g.loc[10, 120] == pytest.approx(sharpes(wf.trials)[key])
 
 
 def test_hac_matches_ols_coefficients_but_widens_errors_under_autocorrelation():

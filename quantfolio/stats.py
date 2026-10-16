@@ -22,24 +22,29 @@ def zscore_trailing(x: pd.Series | pd.DataFrame, n: int, include_current: bool =
     return (x - mu) / sd.replace(0, np.nan)
 
 
-def ols(y: pd.Series, X: pd.DataFrame) -> dict:
-    """OLS with intercept. Returns coefficients, t-stats, R^2 and n."""
+def _fit(y: pd.Series, X: pd.DataFrame):
+    """Shared least-squares core: (names, design matrix A, residuals e, beta, r2)."""
     df = pd.concat([y.rename("y"), X], axis=1).dropna()
     yv = df["y"].to_numpy()
     A = np.column_stack([np.ones(len(df)), df.drop(columns="y").to_numpy()])
     beta, *_ = np.linalg.lstsq(A, yv, rcond=None)
-    resid = yv - A @ beta
-    dof = len(yv) - A.shape[1]
-    s2 = resid @ resid / dof
-    se = np.sqrt(np.diag(s2 * np.linalg.inv(A.T @ A)))
-    names = ["const", *df.drop(columns="y").columns]
+    e = yv - A @ beta
     ss_tot = ((yv - yv.mean()) ** 2).sum()
-    return {
-        "coef": dict(zip(names, beta)),
-        "tstat": dict(zip(names, beta / se)),
-        "r2": float(1 - resid @ resid / ss_tot) if ss_tot > 0 else 0.0,
-        "n": int(len(yv)),
-    }
+    r2 = float(1 - e @ e / ss_tot) if ss_tot > 0 else 0.0
+    return ["const", *df.drop(columns="y").columns], A, e, beta, r2
+
+
+def _result(names, beta, se, r2, n, **extra) -> dict:
+    return {"coef": dict(zip(names, beta)), "tstat": dict(zip(names, beta / se)),
+            "r2": r2, "n": int(n), **extra}
+
+
+def ols(y: pd.Series, X: pd.DataFrame) -> dict:
+    """OLS with intercept. Returns coefficients, t-stats, R^2 and n."""
+    names, A, e, beta, r2 = _fit(y, X)
+    s2 = e @ e / (len(e) - A.shape[1])
+    se = np.sqrt(np.diag(s2 * np.linalg.inv(A.T @ A)))
+    return _result(names, beta, se, r2, len(e))
 
 
 def ols_hac(y: pd.Series, X: pd.DataFrame, lags: int | None = None) -> dict:
@@ -49,12 +54,8 @@ def ols_hac(y: pd.Series, X: pd.DataFrame, lags: int | None = None) -> dict:
     t-stats overstate significance. Bartlett kernel; default lag is the
     Newey-West rule of thumb 4*(n/100)^(2/9).
     """
-    df = pd.concat([y.rename("y"), X], axis=1).dropna()
-    yv = df["y"].to_numpy()
-    A = np.column_stack([np.ones(len(df)), df.drop(columns="y").to_numpy()])
-    n, k = A.shape
-    beta, *_ = np.linalg.lstsq(A, yv, rcond=None)
-    e = yv - A @ beta
+    names, A, e, beta, r2 = _fit(y, X)
+    n = len(e)
     L = int(4 * (n / 100) ** (2 / 9)) if lags is None else lags
     Xe = A * e[:, None]
     S = Xe.T @ Xe
@@ -63,16 +64,7 @@ def ols_hac(y: pd.Series, X: pd.DataFrame, lags: int | None = None) -> dict:
         S += (1 - lag / (L + 1)) * (G + G.T)
     bread = np.linalg.inv(A.T @ A)
     se = np.sqrt(np.diag(bread @ S @ bread))
-    names = ["const", *df.drop(columns="y").columns]
-    ss_tot = ((yv - yv.mean()) ** 2).sum()
-    return {
-        "coef": dict(zip(names, beta)),
-        "se": dict(zip(names, se)),
-        "tstat": dict(zip(names, beta / se)),
-        "r2": float(1 - e @ e / ss_tot) if ss_tot > 0 else 0.0,
-        "n": int(n),
-        "lags": L,
-    }
+    return _result(names, beta, se, r2, n)
 
 
 def adf_test(series: pd.Series) -> dict:

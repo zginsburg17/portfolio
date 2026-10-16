@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .metrics import TRADING_DAYS
+from .metrics import sharpe
 
 
 def countertrend(ohlc: pd.DataFrame, p: float = 2.2, window: int = 20, side: str = "long") -> pd.Series:
@@ -34,9 +34,7 @@ def countertrend(ohlc: pd.DataFrame, p: float = 2.2, window: int = 20, side: str
 
 def sharpe_of(returns: pd.Series, blanks: str = "zero") -> float:
     """Annualised Sharpe on signal days only ('blank') or with zeros filled in ('zero')."""
-    r = returns.fillna(0.0) if blanks == "zero" else returns.dropna()
-    sd = r.std()
-    return float(r.mean() / sd * np.sqrt(TRADING_DAYS)) if len(r) > 1 and sd > 0 else 0.0
+    return sharpe(returns.fillna(0.0) if blanks == "zero" else returns.dropna())
 
 
 def sweep_p(ohlc: pd.DataFrame, ps=None, side: str = "long") -> pd.DataFrame:

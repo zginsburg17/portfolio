@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 
 from .metrics import TRADING_DAYS
@@ -18,8 +17,7 @@ def factor_regression(returns: pd.Series, factors: pd.DataFrame, rf_col: str | N
     A strategy that's really just beta shows a high R^2 on the market and a
     near-zero or insignificant alpha.
     """
-    f = factors.copy()
-    y = returns.copy()
+    y, f = returns, factors
     if rf_col and rf_col in f:
         y = y - f[rf_col].reindex(y.index)
         f = f.drop(columns=rf_col)

@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 
 from .backtest import backtest
-from .metrics import TRADING_DAYS, sharpe
+from .metrics import TRADING_DAYS, sharpe, sharpes
 
 _N = NormalDist()
 EULER_GAMMA = 0.5772156649015329
@@ -118,7 +118,7 @@ def walk_forward(prices: pd.DataFrame, factory: Factory, grid: dict[str, list],
     return stream can be computed once on the full history and sliced per fold;
     that is equivalent to re-running the backtest per window, just faster.
     """
-    trials = pd.DataFrame({k: v for k, v in trial_returns(prices, factory, grid, cost_bps).items()})
+    trials = pd.DataFrame(trial_returns(prices, factory, grid, cost_bps))
     n = len(prices)
     if train_days + test_days > n:
         raise ValueError("not enough history for one train+test fold")
@@ -127,7 +127,7 @@ def walk_forward(prices: pd.DataFrame, factory: Factory, grid: dict[str, list],
     while start + test_days <= n:
         lo = 0 if anchored else start - train_days
         train = trials.iloc[lo:start]
-        scores = train.apply(sharpe)
+        scores = sharpes(train)
         best = scores.idxmax()
         test = trials.iloc[start:start + test_days][best]
         rows.append({"test_start": prices.index[start], "params": dict(best),
@@ -138,18 +138,14 @@ def walk_forward(prices: pd.DataFrame, factory: Factory, grid: dict[str, list],
 
 
 # ---------------------------------------------------------------- fragility
-def sensitivity_grid(prices: pd.DataFrame, factory: Factory, x: tuple[str, list],
-                     y: tuple[str, list], fixed: dict | None = None,
-                     cost_bps: float = 5.0) -> pd.DataFrame:
-    """Sharpe over a 2-D parameter grid (rows = y, columns = x). A robust edge shows
-    a broad plateau; a single hot cell surrounded by cold ones is overfit."""
-    (xn, xs), (yn, ys) = x, y
-    grid = pd.DataFrame(index=pd.Index(ys, name=yn), columns=pd.Index(xs, name=xn), dtype=float)
-    for yv in ys:
-        for xv in xs:
-            try:
-                pos = factory(prices, **{**(fixed or {}), xn: xv, yn: yv})
-            except ValueError:  # e.g. fast >= slow
-                continue
-            grid.loc[yv, xv] = sharpe(backtest(prices, pos, cost_bps=cost_bps).returns)
+def sensitivity_grid(trial_sharpes: pd.Series, x: str, y: str) -> pd.DataFrame:
+    """Reshape per-combination Sharpes into a 2-D grid (rows = y, columns = x).
+
+    `trial_sharpes` is `sharpes(wf.trials)`: indexed by the params tuples that
+    `trial_returns` produces, so the grid reuses backtests already run. A robust
+    edge shows a broad plateau; one hot cell among cold ones is overfit.
+    """
+    flat = {(dict(k)[y], dict(k)[x]): v for k, v in trial_sharpes.items()}
+    grid = pd.Series(flat).unstack()
+    grid.index.name, grid.columns.name = y, x
     return grid

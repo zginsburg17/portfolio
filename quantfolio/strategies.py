@@ -8,19 +8,15 @@ backtester is responsible for lagging them so they trade on day t+1.
 
 from __future__ import annotations
 
+from functools import partial
+
 import numpy as np
 import pandas as pd
 
-
-def sma_crossover(prices: pd.DataFrame, fast: int = 20, slow: int = 100) -> pd.DataFrame:
-    """Trend following: long when the fast SMA is above the slow SMA, else short."""
-    if fast >= slow:
-        raise ValueError("fast window must be shorter than slow window")
-    f = prices.rolling(fast).mean()
-    s = prices.rolling(slow).mean()
-    sig = np.sign(f - s)
-    sig[s.isna()] = 0.0
-    return sig / prices.shape[1]
+from .backtest import BacktestResult, backtest
+from .metrics import TRADING_DAYS
+from .portfolio import inverse_vol_weights
+from .stats import zscore_trailing
 
 
 def ma_crossover(
@@ -71,8 +67,6 @@ def pairs_spread(
     (long spread: zdiff >= +target; short spread: zdiff <= -target).
     Legs are sized inversely to their trailing `vol_window`-day volatility.
     """
-    from .stats import zscore_trailing
-
     if prices.shape[1] != 2:
         raise ValueError("pairs_spread needs exactly two price columns")
     a, b = prices.columns
@@ -94,9 +88,7 @@ def pairs_spread(
                 cur, held = 1, 1
         pos[t] = cur
 
-    vol = prices.pct_change().rolling(vol_window).std()
-    inv = 1.0 / vol.replace(0, np.nan)
-    w = inv.div(inv.sum(axis=1), axis=0).fillna(0.0)
+    w = inverse_vol_weights(prices.pct_change(), vol_window, lag=0).fillna(0.0)
     out = pd.DataFrame(index=prices.index, columns=prices.columns, dtype=float)
     out[a] = pos * w[a]
     out[b] = -pos * w[b]
@@ -109,7 +101,7 @@ def time_series_momentum(
     """Moskowitz-style TSMOM: sign of trailing return, sized to a per-asset vol target."""
     rets = prices.pct_change()
     direction = np.sign(prices.pct_change(lookback))
-    ann_vol = rets.rolling(vol_window).std() * np.sqrt(252)
+    ann_vol = rets.rolling(vol_window).std() * np.sqrt(TRADING_DAYS)
     size = (target_vol / ann_vol).clip(upper=3.0)
     pos = (direction * size).fillna(0.0)
     return pos / prices.shape[1]
@@ -122,20 +114,12 @@ def bollinger_mean_reversion(
 
     Positions are held (state machine) until the z-score reverts inside exit_z.
     """
-    z = (prices - prices.rolling(window).mean()) / prices.rolling(window).std()
-    pos = pd.DataFrame(0.0, index=prices.index, columns=prices.columns)
-    cur = np.zeros(prices.shape[1])
-    zv = z.to_numpy()
-    out = np.zeros_like(zv)
-    for t in range(len(zv)):
-        row = zv[t]
-        valid = ~np.isnan(row)
-        cur = np.where(valid & (row > entry_z), -1.0, cur)
-        cur = np.where(valid & (row < -entry_z), 1.0, cur)
-        cur = np.where(valid & (np.abs(row) < exit_z), 0.0, cur)
-        out[t] = cur
-    pos[:] = out
-    return pos / prices.shape[1]
+    z = zscore_trailing(prices, window, include_current=True)
+    events = pd.DataFrame(np.nan, index=z.index, columns=z.columns)
+    events[z > entry_z] = -1.0
+    events[z < -entry_z] = 1.0
+    events[z.abs() < exit_z] = 0.0  # NaN z never triggers: all three tests are False
+    return events.ffill().fillna(0.0) / prices.shape[1]
 
 
 def cross_sectional_momentum(
@@ -154,21 +138,26 @@ def cross_sectional_momentum(
     return (long - short).fillna(0.0) * 0.5  # 0.5 long + 0.5 short = 1.0 gross
 
 
+def equal_weight(fn):
+    """Wrap a per-instrument +/-1 signal so a universe sums to unit gross exposure."""
+
+    def run(prices: pd.DataFrame, **kw) -> pd.DataFrame:
+        return fn(prices, **kw) / prices.shape[1]
+
+    return run
+
+
 STRATEGIES = {
-    "sma_crossover": sma_crossover,
+    "sma_crossover": partial(equal_weight(ma_crossover), fast=20, slow=100),
     "tsmom": time_series_momentum,
     "mean_reversion": bollinger_mean_reversion,
     "xs_momentum": cross_sectional_momentum,
 }
 
 
-def _scaled(fn, **kw):
-    """Wrap a per-instrument +/-1 signal so a universe sums to unit gross exposure."""
-
-    def run(prices: pd.DataFrame) -> pd.DataFrame:
-        return fn(prices, **kw) / prices.shape[1]
-
-    return run
+def run_all(prices: pd.DataFrame, cost_bps: float = 5.0) -> dict[str, BacktestResult]:
+    """Backtest every registered strategy on one price panel."""
+    return {n: backtest(prices, fn(prices), cost_bps=cost_bps) for n, fn in STRATEGIES.items()}
 
 
 # Trend systems from the TREND study, keyed by name, as per-instrument +/-1 signals.

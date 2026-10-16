@@ -45,7 +45,7 @@ def backtest(
     asset_rets = prices.pct_change().fillna(0.0)
 
     gross_ret = (held * asset_rets).sum(axis=1)
-    turnover = held.diff().abs().sum(axis=1).fillna(held.abs().sum(axis=1))
+    turnover = held.diff().abs().sum(axis=1)
     costs = turnover * cost_bps / 1e4
     return BacktestResult(
         returns=gross_ret - costs,

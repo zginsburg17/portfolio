@@ -23,6 +23,12 @@ def sharpe(returns: pd.Series, rf: float = 0.0) -> float:
     return float(excess.mean() / sd * np.sqrt(TRADING_DAYS)) if sd > 0 else 0.0
 
 
+def sharpes(returns: pd.DataFrame) -> pd.Series:
+    """Annualised Sharpe of every column at once (0 where volatility is zero)."""
+    sd = returns.std()
+    return (returns.mean() / sd.where(sd > 0) * np.sqrt(TRADING_DAYS)).fillna(0.0)
+
+
 def sortino(returns: pd.Series, rf: float = 0.0) -> float:
     excess = returns - rf / TRADING_DAYS
     downside = np.sqrt((np.minimum(excess, 0.0) ** 2).mean())

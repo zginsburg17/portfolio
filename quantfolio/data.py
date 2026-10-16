@@ -5,8 +5,6 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-TRADING_DAYS = 252
-
 
 def synthetic_prices(
     n_assets: int = 8,

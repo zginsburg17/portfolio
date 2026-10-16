@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 
+from .attribution import attribution_table
 from .backtest import backtest
 from .countertrend import countertrend, market_vs_strategy, sharpe_of, sweep_p
-from .metrics import drawdown, equity_curve, performance_summary, sharpe, sortino
+from .metrics import drawdown, performance_summary, sharpe, sharpes, sortino
 from .portfolio import combine_equal, combine_inverse_vol
+from .report import summary_table
 from .stats import adf_test, ols, quintile_table, zscore_trailing
-from .strategies import TREND_SYSTEMS, ma_crossover, pairs_spread
+from .strategies import TREND_SYSTEMS, equal_weight, ma_crossover, pairs_spread
+from .validation import (bootstrap_sharpe_ci, deflated_sharpe, probabilistic_sharpe,
+                         sensitivity_grid, walk_forward)
 
 
 def _hdr(title: str) -> None:
@@ -61,7 +64,7 @@ def pairs_study(pair: pd.DataFrame, cost_bps: float = 2.0) -> None:
         pos = pairs_spread(pair, lookback=n)
         rets[f"spread{n}"] = backtest(pair, pos, cost_bps=cost_bps, max_gross=None).returns
     df = pd.DataFrame(rets)
-    print(pd.DataFrame({c: performance_summary(df[c]) for c in df}).T[["CAGR", "Sharpe", "Max DD"]]
+    print(summary_table({c: performance_summary(df[c]) for c in df})[["CAGR", "Sharpe", "Max DD"]]
           .round(3).to_string())
     print(f"Equal-weight combo Sharpe: {sharpe(combine_equal(df)):.2f}")
 
@@ -114,23 +117,17 @@ def vol_study(price: pd.Series, vol_window: int = 20, z_window: int = 250) -> No
 
 def validation_study(prices: pd.DataFrame, cost_bps: float = 5.0) -> None:
     """How much of a 'best parameters' backtest survives honest testing?"""
-    from .strategies import ma_crossover
-    from .validation import (bootstrap_sharpe_ci, deflated_sharpe, probabilistic_sharpe,
-                             sensitivity_grid, walk_forward)
-
     _hdr("VALIDATION: in-sample optimum vs out-of-sample reality")
 
-    def factory(p, fast, slow):
-        return ma_crossover(p, fast, slow) / p.shape[1]
-
+    factory = equal_weight(ma_crossover)
     grid = {"fast": [5, 10, 20, 30, 40], "slow": [60, 80, 100, 150, 200]}
     wf = walk_forward(prices, factory, grid, cost_bps=cost_bps)
-    sharpes = wf.trials.apply(sharpe)
-    n_trials = len(sharpes)
-    best_key = sharpes.idxmax()
+    trial_sr = sharpes(wf.trials)
+    n_trials = len(trial_sr)
+    best_key = trial_sr.idxmax()
     best = wf.trials[best_key]
     print(f"Trials: {n_trials} parameter sets. Full-sample best {dict(best_key)} -> "
-          f"Sharpe {sharpes.max():.2f} (this number is selection-biased).")
+          f"Sharpe {trial_sr.max():.2f} (this number is selection-biased).")
     print(f"Walk-forward over {len(wf.folds)} folds: mean in-sample Sharpe {wf.is_sharpe:.2f} "
           f"vs out-of-sample Sharpe {wf.oos_sharpe:.2f}")
     print(f"Parameters chosen per fold: {wf.folds['params'].astype(str).nunique()} distinct "
@@ -140,12 +137,11 @@ def validation_study(prices: pd.DataFrame, cost_bps: float = 5.0) -> None:
     print(f"\nOOS Sharpe 95% bootstrap CI: [{ci['lo']:.2f}, {ci['hi']:.2f}]  "
           f"P(Sharpe<=0) = {ci['p_le_zero']:.1%}  ({ci['n_days']} days)")
     print(f"Probabilistic Sharpe, OOS (P true SR > 0): {probabilistic_sharpe(wf.oos_returns):.1%}")
-    var = float((sharpes ** 2).mean() - sharpes.mean() ** 2)
+    var = float(trial_sr.var(ddof=0))
     print(f"Deflated Sharpe of the full-sample winner (P true SR > luck-adjusted hurdle): "
           f"{deflated_sharpe(best, n_trials, var):.1%}")
 
-    hm = sensitivity_grid(prices, factory, ("slow", grid["slow"]), ("fast", grid["fast"]),
-                          cost_bps=cost_bps)
+    hm = sensitivity_grid(trial_sr, x="slow", y="fast")
     print("\nSharpe sensitivity (rows = fast MA, cols = slow MA):")
     print(hm.round(2).to_string())
 
@@ -153,8 +149,6 @@ def validation_study(prices: pd.DataFrame, cost_bps: float = 5.0) -> None:
 def attribution_study(strategy_returns: pd.DataFrame, factors: pd.DataFrame,
                       rf_col: str | None = "RF") -> None:
     """Regress each strategy on factors: is there alpha beyond the exposures?"""
-    from .attribution import attribution_table
-
     _hdr("ATTRIBUTION: alpha vs factor exposure (Newey-West t-stats)")
     tbl = attribution_table(strategy_returns, factors, rf_col)
     print(tbl.round(3).to_string())

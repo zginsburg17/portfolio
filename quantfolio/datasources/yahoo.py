@@ -7,15 +7,14 @@ results to the cache (or export a CSV) so they stay reproducible if it changes.
 from __future__ import annotations
 
 import json
-import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
 
 import pandas as pd
 
 from .cache import cached
-from .http import DataSourceError, Transport, fetch
+from .http import DataSourceError, Transport, fetch, log
 
-log = logging.getLogger("quantfolio.data")
 BASE = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 
 
@@ -69,13 +68,16 @@ def fetch_prices(symbols: list[str], start=None, end=None, field: str = "adj_clo
 
     Symbols that fail are skipped with a warning; if all fail, raises.
     """
-    cols, failed = {}, []
-    for s in symbols:
+    def one(s: str):
         try:
-            cols[s] = fetch_bars(s, start, end, transport, refresh, offline)[field]
+            return fetch_bars(s, start, end, transport, refresh, offline)[field]
         except DataSourceError as e:
-            failed.append(s)
             log.warning("skipping %s: %s", s, e)
+
+    with ThreadPoolExecutor(max_workers=min(6, len(symbols) or 1)) as pool:  # network-bound
+        results = dict(zip(symbols, pool.map(one, symbols)))
+    cols = {s: v for s, v in results.items() if v is not None}
+    failed = [s for s, v in results.items() if v is None]
     if not cols:
         raise DataSourceError(f"no symbols could be fetched (failed: {failed})")
     return pd.DataFrame(cols).sort_index()

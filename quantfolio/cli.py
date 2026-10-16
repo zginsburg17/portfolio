@@ -6,14 +6,13 @@ import argparse
 
 import pandas as pd
 
-from .backtest import backtest
 from . import studies
-from .datasources import LARGE_CAP, DataSourceError, clean_panel, fetch_factors, fetch_prices
 from .data import load_prices_csv, synthetic_ohlc, synthetic_pair, synthetic_prices
+from .datasources import LARGE_CAP, DataSourceError, clean_panel, fetch_factors, fetch_prices
 from .metrics import performance_summary
-from .portfolio import combine_inverse_vol, correlation_matrix
+from .portfolio import combine_inverse_vol
 from .report import format_table, plot_report, summary_table
-from .strategies import STRATEGIES
+from .strategies import run_all
 
 
 def load_universe(args: argparse.Namespace) -> pd.DataFrame:
@@ -31,7 +30,7 @@ def run_studies(args: argparse.Namespace) -> None:
     prices = load_universe(args)
     want = (lambda k: args.study in (k, "all"))
     if want("trend"):
-        studies.trend_study(prices, cost_bps=0.0)
+        studies.trend_study(prices)
     if want("pairs"):
         studies.pairs_study(synthetic_pair(), cost_bps=args.cost_bps)
     if want("countertrend"):
@@ -43,12 +42,11 @@ def run_studies(args: argparse.Namespace) -> None:
     if want("validation"):
         studies.validation_study(prices, cost_bps=args.cost_bps)
     if want("attribution"):
-        rets = pd.DataFrame({n: backtest(prices, fn(prices), cost_bps=args.cost_bps).returns
-                             for n, fn in STRATEGIES.items()})
+        rets = pd.DataFrame({n: r.returns for n, r in run_all(prices, args.cost_bps).items()})
         if args.source == "yahoo" and not args.csv:
-            fac = fetch_factors("ff5", args.start, args.end, refresh=args.refresh, offline=args.offline)
-            fac = fac.join(fetch_factors("mom", args.start, args.end, refresh=args.refresh,
-                                         offline=args.offline), how="inner")
+            kw = {"refresh": args.refresh, "offline": args.offline}
+            fac = fetch_factors("ff5", args.start, args.end, **kw).join(
+                fetch_factors("mom", args.start, args.end, **kw), how="inner")
             studies.attribution_study(rets, fac, "RF")
         else:
             print("\n(synthetic/CSV data: using the universe's equal-weight return as the only "
@@ -81,14 +79,14 @@ def main(argv: list[str] | None = None) -> None:
 
 def _run(args: argparse.Namespace) -> None:
     if args.study:
-        return run_studies(args)
+        run_studies(args)
+        return
 
     prices = load_universe(args)
     print(f"Universe: {prices.shape[1]} assets, {len(prices)} days "
           f"({prices.index[0].date()} -> {prices.index[-1].date()}), cost {args.cost_bps} bps\n")
 
-    results = {name: backtest(prices, fn(prices), cost_bps=args.cost_bps)
-               for name, fn in STRATEGIES.items()}
+    results = run_all(prices, args.cost_bps)
     rets = pd.DataFrame({n: r.returns for n, r in results.items()})
     port = combine_inverse_vol(rets)
 
@@ -96,7 +94,7 @@ def _run(args: argparse.Namespace) -> None:
     stats["PORTFOLIO"] = performance_summary(port)
     print(format_table(summary_table(stats)))
     print("\nStrategy return correlations:")
-    print(correlation_matrix(rets).round(2).to_string())
+    print(rets.corr().round(2).to_string())
     print(f"\nChart saved to {plot_report(rets, port, args.out)}")
 
 

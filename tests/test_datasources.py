@@ -17,7 +17,7 @@ from quantfolio.datasources import DataSourceError, clean_panel, fetch_factors, 
 from quantfolio.datasources.famafrench import parse_french_zip
 from quantfolio.datasources.fred import parse_fred
 from quantfolio.datasources.http import fetch
-from quantfolio.datasources.universe import LARGE_CAP, SECTOR_OF
+from quantfolio.datasources.universe import LARGE_CAP, SECTOR_OF, SECTORS
 from quantfolio.datasources.yahoo import parse_chart
 
 
@@ -48,8 +48,7 @@ class Counting:
 
 
 def test_parse_chart_uses_adjusted_close_and_drops_null_bars():
-    body = json.loads(chart_body([10.0, None, 12.0], adj=[5.0, None, 6.0]))
-    df = parse_chart(json.dumps(body).encode(), "AAA")
+    df = parse_chart(chart_body([10.0, None, 12.0], adj=[5.0, None, 6.0]), "AAA")
     assert list(df["adj_close"]) == [5.0, 6.0] and list(df["close"]) == [10.0, 12.0]
     assert df.index.is_monotonic_increasing
 
@@ -168,4 +167,6 @@ def test_clean_panel_drops_sparse_names_and_fills_short_gaps():
 
 
 def test_universe_is_consistent():
-    assert len(LARGE_CAP) == len(set(LARGE_CAP)) and set(LARGE_CAP) == set(SECTOR_OF)
+    # a ticker listed under two sectors would silently collapse in SECTOR_OF
+    assert len(LARGE_CAP) == len(set(LARGE_CAP)) == len(SECTOR_OF)
+    assert all(SECTOR_OF[t] == s for s, ts in SECTORS.items() for t in ts)

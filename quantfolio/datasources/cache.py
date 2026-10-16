@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import logging
 import os
 import time
 from pathlib import Path
@@ -11,9 +10,7 @@ from typing import Callable
 
 import pandas as pd
 
-from .http import DataSourceError
-
-log = logging.getLogger("quantfolio.data")
+from .http import DataSourceError, log
 
 
 def cache_dir() -> Path:

@@ -3,10 +3,13 @@ import pandas as pd
 import pytest
 
 from quantfolio.backtest import backtest
-from quantfolio.data import synthetic_prices
+from quantfolio.countertrend import countertrend, market_vs_strategy, sharpe_of, sweep_p
+from quantfolio.data import synthetic_ohlc, synthetic_pair, synthetic_prices
 from quantfolio.metrics import cagr, drawdown, performance_summary, sharpe
-from quantfolio.portfolio import combine_inverse_vol
-from quantfolio.strategies import STRATEGIES, sma_crossover
+from quantfolio.portfolio import combine_equal, combine_inverse_vol
+from quantfolio.stats import adf_test, ols, quintile_table, zscore_trailing
+from quantfolio.strategies import (STRATEGIES, breakout, equal_weight, ma_crossover, pairs_spread,
+                                   run_all)
 
 
 @pytest.fixture(scope="module")
@@ -31,7 +34,7 @@ def test_no_lookahead_bias(prices):
 
 
 def test_costs_reduce_returns(prices):
-    pos = sma_crossover(prices, 10, 50)
+    pos = equal_weight(ma_crossover)(prices, fast=10, slow=50)
     free = backtest(prices, pos, cost_bps=0)
     costly = backtest(prices, pos, cost_bps=25)
     assert costly.returns.sum() < free.returns.sum()
@@ -75,24 +78,18 @@ def test_xs_momentum_is_dollar_neutral(prices):
     assert pos.sum(axis=1).abs().max() < 1e-9
 
 
-def test_sma_rejects_bad_windows(prices):
+def test_ma_crossover_rejects_bad_windows(prices):
     with pytest.raises(ValueError):
-        sma_crossover(prices, fast=50, slow=10)
+        ma_crossover(prices, fast=50, slow=10)
 
 
 def test_portfolio_hits_target_vol_roughly(prices):
-    rets = pd.DataFrame({n: backtest(prices, f(prices)).returns for n, f in STRATEGIES.items()})
+    rets = pd.DataFrame({n: r.returns for n, r in run_all(prices).items()})
     port = combine_inverse_vol(rets, target_vol=0.10)
     assert 0.04 < port.std() * np.sqrt(252) < 0.25
 
 
 # ---- technique building blocks (trend / pairs / countertrend / risk / vol) ----
-from quantfolio.countertrend import countertrend, market_vs_strategy, sharpe_of, sweep_p
-from quantfolio.data import synthetic_ohlc, synthetic_pair
-from quantfolio.portfolio import combine_equal
-from quantfolio.stats import adf_test, ols, quintile_table, zscore_trailing
-from quantfolio.strategies import breakout, ma_crossover, pairs_spread
-
 
 def test_zscore_excludes_today():
     x = pd.Series([1.0, 2.0, 3.0, 4.0, 100.0])

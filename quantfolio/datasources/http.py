@@ -47,7 +47,7 @@ def fetch(url: str, params: dict | None = None, transport: Transport | None = No
             last = e
             if e.code not in (429, 500, 502, 503, 504):
                 break
-        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as e:
+        except OSError as e:  # URLError, timeouts and connection errors are all OSErrors
             last = e
             if any(code in str(e) for code in ("403", "407")):  # proxy/policy denial
                 break
